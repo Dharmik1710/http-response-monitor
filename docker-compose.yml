@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: monitor
+      POSTGRES_DB: http_monitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  worker:
+    build: ./backend
+    environment:
+      APP_ROLE: worker
+      DATABASE_URL: postgres://monitor:monitor@postgres:5432/http_monitor
+      REDIS_URL: redis://redis:6379
+      PING_INTERVAL_MS: 300000
+    depends_on:
+      - postgres
+      - redis
+
+  web:
+    build: ./backend
+    environment:
+      APP_ROLE: web
+      DATABASE_URL: postgres://monitor:monitor@postgres:5432/http_monitor
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - web
+
+volumes:
+  pgdata:
