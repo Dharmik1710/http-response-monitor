@@ -2,7 +2,7 @@
 
 BizScout take-home: scheduled httpbin pings, PostgreSQL storage, REST history, SSE dashboard. **Modular monolith** — one backend codebase, deployable as **worker** (ping) or **web** (API) via `APP_ROLE`. Option B (LLM) after core ships.
 
-**Status:** In development · URLs: _TBD_
+**Status:** Core complete
 
 ## Repository structure
 
@@ -31,10 +31,14 @@ Local: shorter `PING_INTERVAL_MS` in dev only.
 
 ```bash
 git clone <repository-url> && cd CT_assessment
-npm install                    # root or per package — TBD
-docker compose up              # postgres + redis + worker + web + frontend
-# or: backend with APP_ROLE=worker | web; frontend dev server separately
+docker compose up -d           # postgres + redis
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+cd backend && npm ci && npm run dev
+cd frontend && npm ci && npm run dev
 ```
+
+Env: copy `.env.example` → `.env` per package (`.env` is gitignored). Production secrets live on Render / GitHub Actions, not in the repo.
 
 ## Architecture
 
@@ -65,7 +69,7 @@ APP_ROLE=worker                APP_ROLE=web
 | Messaging | Redis pub/sub |
 | Scheduler | `node-cron` (worker only) |
 | CI | GitHub Actions — lint, Vitest, coverage on `ping/` |
-| Deploy | Railway or Render — Postgres + Redis; services: `api-worker`, `api-web`, static frontend |
+| Deploy | Render Blueprint (free) or Railway; static frontend via platform build (Vercel optional) |
 
 Postgres: relational history, `interval_key` constraints, JSONB payloads, one DB for worker and web.
 
@@ -108,16 +112,14 @@ Index: `created_at DESC`. Migrations in `backend/migrations/`.
 
 ## Deployment
 
-1. Postgres + Redis on platform.
-2. Deploy **api-worker** (1 replica): `APP_ROLE=worker`, `PING_INTERVAL_MS=300000`.
-3. Deploy **api-web** (≥1 replica): `APP_ROLE=web`.
-4. Deploy **frontend** with API URL pointing at web service.
-5. Run migrations; verify `GET /health` and first ping row.
+**Render:** Dashboard → New → Blueprint → connect repo (`render.yaml`). Sets up Postgres, Redis, monolith API, static frontend. Set `FRONTEND_URL` on the API to the frontend URL. Turn off Render auto-deploy on API/frontend; use GitHub deploy hooks (see below).
 
-| Service | URL |
-|---------|-----|
-| API (web) | _TBD_ |
-| Dashboard | _TBD_ |
+| | URL |
+|---|-----|
+| Dashboard | _add after deploy_ |
+| API health | _add after deploy_ |
+
+**CI/CD:** PR/push to `main` runs tests. After merge, deploy runs when `DEPLOY_ENABLED=true` and secrets `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_FRONTEND` are set. Variables: `RENDER_DASHBOARD_URL`, `RENDER_API_HEALTH_URL`.
 
 ## Future improvements
 

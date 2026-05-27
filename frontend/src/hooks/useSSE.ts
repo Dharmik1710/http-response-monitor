@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PingRecord } from "../types";
+import { apiUrl } from "../config";
 
 type SSEStatus = "connecting" | "connected" | "disconnected";
 
@@ -10,7 +11,7 @@ export function useSSE(onMessage: (ping: PingRecord) => void) {
 
   useEffect(() => {
     let closed = false;
-    const source = new EventSource("/api/events");
+    const source = new EventSource(apiUrl("/api/events"));
 
     source.onopen = () => {
       if (!closed) setStatus("connected");
