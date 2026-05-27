@@ -7,36 +7,36 @@ import { closePublisher } from "./realtime/publisher";
 import { prisma } from "./db/prisma";
 
 async function main() {
-  const role = config.appRole;
-  logger.info({ role }, "Starting application");
+    const role = config.appRole;
+    logger.info({ role }, "Starting application");
 
-  if (role === "worker" || role === "monolith") {
-    startScheduler();
-    logger.info("Scheduler started");
-  }
+    if (role === "worker" || role === "monolith") {
+        startScheduler();
+        logger.info("Scheduler started");
+    }
 
-  if (role === "web" || role === "monolith") {
-    createSubscriber();
-    const app = createApp();
-    app.listen(config.port, () => {
-      logger.info({ port: config.port }, "Web server listening");
-    });
-  }
+    if (role === "web" || role === "monolith") {
+        createSubscriber();
+        const app = createApp();
+        app.listen(config.port, () => {
+            logger.info({ port: config.port }, "Web server listening");
+        });
+    }
 
-  const shutdown = async () => {
-    logger.info("Shutting down...");
-    if (role === "worker" || role === "monolith") stopScheduler();
-    if (role === "web" || role === "monolith") closeSubscriber();
-    closePublisher();
-    await prisma.$disconnect();
-    process.exit(0);
-  };
+    const shutdown = async () => {
+        logger.info("Shutting down...");
+        if (role === "worker" || role === "monolith") stopScheduler();
+        if (role === "web" || role === "monolith") closeSubscriber();
+        closePublisher();
+        await prisma.$disconnect();
+        process.exit(0);
+    };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
 }
 
 main().catch((err) => {
-  logger.fatal({ err }, "Fatal startup error");
-  process.exit(1);
+    logger.fatal({ err }, "Fatal startup error");
+    process.exit(1);
 });

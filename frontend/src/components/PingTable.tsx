@@ -6,18 +6,14 @@ type Props = {
   loading: boolean;
 };
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], {
+export function formatTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  });
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
   });
 }
 
@@ -37,13 +33,12 @@ function PingRow({ ping }: { ping: PingRecord }) {
         </td>
         <td>{ping.responseStatus ?? "—"}</td>
         <td>{ping.latencyMs != null ? `${ping.latencyMs}ms` : "—"}</td>
-        <td>{formatDate(ping.createdAt)}</td>
-        <td>{formatTime(ping.createdAt)}</td>
+        <td>{formatTimestamp(ping.createdAt)}</td>
         <td className="expand-icon">{expanded ? "▾" : "▸"}</td>
       </tr>
       {expanded && (
         <tr className={`detail-row ${ping.success ? "" : "detail-row-error"}`}>
-          <td colSpan={6}>
+          <td colSpan={5}>
             {!ping.success && ping.errorMessage && (
               <div className="detail-error">
                 <strong>Error:</strong> {ping.errorMessage}
@@ -87,8 +82,7 @@ export function PingTable({ pings, loading }: Props) {
             <th>Status</th>
             <th>HTTP Code</th>
             <th>Latency</th>
-            <th>Date</th>
-            <th>Time</th>
+            <th>Timestamp</th>
             <th></th>
           </tr>
         </thead>

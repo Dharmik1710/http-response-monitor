@@ -10,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U monitor"]
+      test: ["CMD-SHELL", "pg_isready -U monitor -d http_monitor"]
       interval: 5s
       timeout: 3s
       retries: 5
