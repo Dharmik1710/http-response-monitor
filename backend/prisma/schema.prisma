@@ -1,0 +1,24 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model PingResponse {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  intervalKey           DateTime @unique @map("interval_key") @db.Timestamptz()
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  requestPayload        Json     @map("request_payload")
+  responseStatus        Int?     @map("response_status")
+  responseBody          Json?    @map("response_body")
+  responseBodyTruncated Boolean  @default(false) @map("response_body_truncated")
+  latencyMs             Int?     @map("latency_ms")
+  success               Boolean
+  errorMessage          String?  @map("error_message")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("ping_responses")
+}

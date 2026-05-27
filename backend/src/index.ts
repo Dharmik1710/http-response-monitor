@@ -4,7 +4,7 @@ import { createApp } from "./api/app";
 import { startScheduler, stopScheduler } from "./ping/scheduler";
 import { createSubscriber, closeSubscriber } from "./realtime/subscriber";
 import { closePublisher } from "./realtime/publisher";
-import { pool } from "./db/pool";
+import { prisma } from "./db/prisma";
 
 async function main() {
   const role = config.appRole;
@@ -28,7 +28,7 @@ async function main() {
     if (role === "worker") stopScheduler();
     if (role === "web") closeSubscriber();
     closePublisher();
-    await pool.end();
+    await prisma.$disconnect();
     process.exit(0);
   };
 

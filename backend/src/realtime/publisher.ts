@@ -1,21 +1,31 @@
-/**
- * Publishes a new-ping event to Redis (worker role).
- *
- * TODO: Implement Redis PUBLISH.
- * - Channel: "pings:new"
- * - Payload: JSON { id } (small; subscriber fetches full row if needed)
- *
- * @param pingId - UUID of the newly inserted ping row
- */
-export async function publishPing(_pingId: string): Promise<void> {
-  throw new Error("Not implemented");
+import Redis from "ioredis";
+import { config } from "../config";
+import { logger } from "../config/logger";
+
+const CHANNEL = "pings:new";
+let redis: Redis | null = null;
+
+function getClient(): Redis {
+  if (!redis) {
+    redis = new Redis(config.redisUrl);
+    redis.on("error", (err) => logger.error({ err }, "Redis publisher error"));
+  }
+  return redis;
 }
 
 /**
- * Closes the Redis publish connection on shutdown.
- *
- * TODO: Disconnect Redis client.
+ * Publishes a new-ping event to Redis (worker role).
+ * @param pingId - UUID of the newly inserted ping row
  */
+export async function publishPing(pingId: string): Promise<void> {
+  await getClient().publish(CHANNEL, JSON.stringify({ id: pingId }));
+  logger.debug({ pingId }, "Published ping event");
+}
+
+/** Closes the Redis publish connection on shutdown. */
 export function closePublisher(): void {
-  // no-op until implemented
+  if (redis) {
+    redis.disconnect();
+    redis = null;
+  }
 }
