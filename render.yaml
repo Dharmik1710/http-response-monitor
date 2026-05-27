@@ -35,9 +35,9 @@ services:
           type: keyvalue
           name: http-monitor-redis
           property: connectionString
-      # 2 min pings so reviewers see data quickly (use 300000 for real prod)
+      # 5 min pings (300000ms)
       - key: PING_INTERVAL_MS
-        value: "120000"
+        value: "300000"
       - key: HTTPBIN_URL
         value: https://httpbin.org/anything
       # After deploy: set to frontend URL, e.g. https://http-monitor-frontend.onrender.com
