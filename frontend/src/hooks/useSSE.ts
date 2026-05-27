@@ -9,11 +9,15 @@ export function useSSE(onMessage: (ping: PingRecord) => void) {
   callbackRef.current = onMessage;
 
   useEffect(() => {
+    let closed = false;
     const source = new EventSource("/api/events");
 
-    source.onopen = () => setStatus("connected");
+    source.onopen = () => {
+      if (!closed) setStatus("connected");
+    };
 
     source.onmessage = (event) => {
+      if (!closed) setStatus("connected");
       try {
         const ping: PingRecord = JSON.parse(event.data);
         callbackRef.current(ping);
@@ -23,12 +27,17 @@ export function useSSE(onMessage: (ping: PingRecord) => void) {
     };
 
     source.onerror = () => {
-      setStatus("disconnected");
+      if (closed) return;
+      if (source.readyState === EventSource.CLOSED) {
+        setStatus("disconnected");
+      } else {
+        setStatus("connecting");
+      }
     };
 
     return () => {
+      closed = true;
       source.close();
-      setStatus("disconnected");
     };
   }, []);
 

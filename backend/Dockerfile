@@ -8,4 +8,7 @@ RUN npx prisma generate
 COPY . .
 RUN npm run build
 
-CMD ["node", "dist/index.js"]
+COPY docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
+ENTRYPOINT ["./docker-entrypoint.sh"]

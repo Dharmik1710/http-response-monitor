@@ -3,12 +3,27 @@ import type { PingsResponse } from "../types";
 const BASE = "/api";
 
 export async function fetchPings(offset = 0): Promise<PingsResponse> {
-  const res = await fetch(`${BASE}/responses?offset=${offset}`);
-  if (!res.ok) throw new Error(`Failed to fetch pings: ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/responses?offset=${offset}`);
+  } catch {
+    throw new Error("Unable to reach the server. Check if the backend is running.");
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP error ${res.status}: failed to load ping history.`);
+  }
   return res.json();
 }
 
 export async function fetchHealth(): Promise<{ ok: boolean; db: string }> {
-  const res = await fetch(`${BASE}/health`);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/health`);
+  } catch {
+    throw new Error("Unable to reach the server. Check if the backend is running.");
+  }
+  if (!res.ok) {
+    throw new Error(`HTTP error ${res.status}: health check failed.`);
+  }
   return res.json();
 }

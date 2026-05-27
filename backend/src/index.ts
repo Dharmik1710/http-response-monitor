@@ -10,23 +10,23 @@ async function main() {
   const role = config.appRole;
   logger.info({ role }, "Starting application");
 
-  if (role === "worker") {
+  if (role === "worker" || role === "monolith") {
     startScheduler();
-    logger.info("Worker: scheduler started");
+    logger.info("Scheduler started");
   }
 
-  if (role === "web") {
+  if (role === "web" || role === "monolith") {
     createSubscriber();
     const app = createApp();
     app.listen(config.port, () => {
-      logger.info({ port: config.port }, "Web: server listening");
+      logger.info({ port: config.port }, "Web server listening");
     });
   }
 
   const shutdown = async () => {
     logger.info("Shutting down...");
-    if (role === "worker") stopScheduler();
-    if (role === "web") closeSubscriber();
+    if (role === "worker" || role === "monolith") stopScheduler();
+    if (role === "web" || role === "monolith") closeSubscriber();
     closePublisher();
     await prisma.$disconnect();
     process.exit(0);
