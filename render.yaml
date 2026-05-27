@@ -8,10 +8,11 @@ databases:
     user: monitor
 
 services:
-  - type: redis
+  - type: keyvalue
     name: http-monitor-redis
     plan: free
     maxmemoryPolicy: noeviction
+    ipAllowList: [] # internal only (API connects via Render private network)
 
   - type: web
     name: http-monitor-api
@@ -31,7 +32,7 @@ services:
           property: connectionString
       - key: REDIS_URL
         fromService:
-          type: redis
+          type: keyvalue
           name: http-monitor-redis
           property: connectionString
       # 2 min pings so reviewers see data quickly (use 300000 for real prod)
