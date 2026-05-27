@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../../db/pool";
+import { prisma } from "../../db/prisma";
 import { logger } from "../../config/logger";
 
 export const healthRoutes = Router();
@@ -12,7 +12,7 @@ export const healthRoutes = Router();
  */
 healthRoutes.get("/health", async (_req: Request, res: Response) => {
   try {
-    await pool.query("SELECT 1");
+    await prisma.$queryRaw`SELECT 1`;
     res.json({ ok: true, db: "up" });
   } catch (err) {
     logger.error({ err }, "Health check failed");

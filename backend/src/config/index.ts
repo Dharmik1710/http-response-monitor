@@ -11,8 +11,8 @@ function required(name: string): string {
 
 /** Centralised application configuration parsed from environment variables. */
 export const config = {
-  /** Process role: "worker" runs scheduler, "web" serves HTTP + SSE */
-  appRole: required("APP_ROLE") as "worker" | "web",
+  /** Process role: "monolith" (default) runs both, "worker"/"web" for split deployment */
+  appRole: (process.env.APP_ROLE || "monolith") as "worker" | "web" | "monolith",
   /** HTTP port for the web role */
   port: parseInt(process.env.PORT || "3000", 10),
   nodeEnv: process.env.NODE_ENV || "development",

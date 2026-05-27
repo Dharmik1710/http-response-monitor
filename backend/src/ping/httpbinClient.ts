@@ -1,44 +1,57 @@
-/** Successful ping result from httpbin. */
-export type PingSuccess = {
-  ok: true;
-  /** HTTP status code returned by httpbin */
-  status: number;
-  /** Parsed JSON response body */
-  body: Record<string, unknown>;
-  /** Round-trip latency in milliseconds */
+import { logger } from "../config/logger";
+
+export type PingResult = {
+  status: number | null;
+  body: Record<string, unknown> | null;
   latencyMs: number;
+  success: boolean;
+  errorMessage: string | null;
 };
 
-/** Failed ping result — network, timeout, or unexpected response. */
-export type PingFailure = {
-  ok: false;
-  errorKind: "timeout" | "network" | "http" | "parse";
-  /** HTTP status if a response was received */
-  status?: number;
-  message: string;
-  /** Latency up to the point of failure, if measurable */
-  latencyMs?: number;
-};
-
-/** Discriminated union returned by {@link pingHttpbin}. Never throws. */
-export type PingResult = PingSuccess | PingFailure;
+const TIMEOUT_MS = 10_000;
 
 /**
- * POSTs the given payload to httpbin and returns a typed result.
- *
- * TODO: Implement HTTP call.
- * - Timeout: 10 s hard cap
- * - Retry: 1 retry on network/timeout only (not 4xx/5xx)
- * - Measure latency with performance.now()
- * - Return discriminated union, never throw
- *
- * @param url - The httpbin endpoint URL
- * @param payload - JSON body to POST
- * @returns Typed success or failure result
+ * POSTs the given payload to httpbin and returns the result. Never throws.
  */
 export async function pingHttpbin(
-  _url: string,
-  _payload: Record<string, unknown>
+  url: string,
+  payload: Record<string, unknown>
 ): Promise<PingResult> {
-  throw new Error("Not implemented");
+  const start = performance.now();
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    const latencyMs = Math.round(performance.now() - start);
+    const body = response.ok ? (await response.json()) as Record<string, unknown> : null;
+
+    return {
+      status: response.status,
+      body,
+      latencyMs,
+      success: response.ok,
+      errorMessage: response.ok ? null : `HTTP ${response.status}`,
+    };
+  } catch (err: unknown) {
+    const latencyMs = Math.round(performance.now() - start);
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error({ err }, "httpbin request failed");
+
+    return {
+      status: null,
+      body: null,
+      latencyMs,
+      success: false,
+      errorMessage: message,
+    };
+  }
 }

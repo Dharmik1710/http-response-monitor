@@ -1,19 +1,46 @@
-/**
- * Subscribes to Redis "pings:new" channel (web role).
- *
- * TODO: Implement Redis SUBSCRIBE.
- * - On message: parse { id }, fetch full row from DB, call sseBroadcaster.broadcast()
- * - Log subscription start
- */
-export function createSubscriber(): void {
-  throw new Error("Not implemented");
-}
+import Redis from "ioredis";
+import { config } from "../config";
+import { logger } from "../config/logger";
+import { getPingById } from "../db/pingRepository";
+import { broadcast } from "./sseBroadcaster";
+
+const CHANNEL = "pings:new";
+let redis: Redis | null = null;
 
 /**
- * Unsubscribes and closes the Redis subscription connection on shutdown.
- *
- * TODO: Disconnect Redis subscriber client.
+ * Subscribes to Redis "pings:new" channel (web role).
+ * On message: fetches full row from DB and broadcasts via SSE.
  */
+export function createSubscriber(): void {
+  redis = new Redis(config.redisUrl);
+  redis.on("error", (err) => logger.error({ err }, "Redis subscriber error"));
+
+  redis.subscribe(CHANNEL, (err) => {
+    if (err) {
+      logger.error({ err }, "Failed to subscribe to Redis channel");
+      return;
+    }
+    logger.info({ channel: CHANNEL }, "Subscribed to Redis channel");
+  });
+
+  redis.on("message", async (_channel: string, message: string) => {
+    try {
+      const { id } = JSON.parse(message);
+      const record = await getPingById(id);
+      if (record) {
+        broadcast(record);
+      }
+    } catch (err) {
+      logger.error({ err }, "Error processing ping event");
+    }
+  });
+}
+
+/** Unsubscribes and closes the Redis subscription connection on shutdown. */
 export function closeSubscriber(): void {
-  // no-op until implemented
+  if (redis) {
+    redis.unsubscribe(CHANNEL);
+    redis.disconnect();
+    redis = null;
+  }
 }

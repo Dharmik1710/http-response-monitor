@@ -1,16 +1,54 @@
+import { config } from "../config";
+import { logger } from "../config/logger";
+import { generatePayload } from "./payloadGenerator";
+import { pingHttpbin } from "./httpbinClient";
+import { insertPing } from "../db/pingRepository";
+import { publishPing } from "../realtime/publisher";
+
+let tickInProgress = false;
+
 /**
- * Orchestrates a single ping tick (called by the scheduler).
- *
- * TODO: Implement the full tick flow:
- * 1. Acquire mutex (skip if previous tick still running)
- * 2. Generate payload via payloadGenerator
- * 3. Call httpbin via httpbinClient
- * 4. Compute interval_key (floor to 5-min UTC bucket)
- * 5. Insert row via pingRepository (success or failure)
- * 6. Publish new row id via publisher (Redis)
- * 7. Log structured event: ping_tick_completed | ping_tick_failed | ping_tick_skipped
- * 8. Release mutex in finally block
+ * Orchestrates a single ping tick. Guarded by mutex to prevent overlap.
  */
 export async function runPingTick(): Promise<void> {
-  throw new Error("Not implemented");
+  if (tickInProgress) {
+    logger.warn("ping_tick_skipped: previous tick still running");
+    return;
+  }
+
+  tickInProgress = true;
+  try {
+    const payload = generatePayload();
+    const result = await pingHttpbin(config.httpbinUrl, payload);
+    const intervalKey = computeIntervalKey(config.pingIntervalMs);
+
+    const record = await insertPing({
+      intervalKey,
+      requestPayload: payload,
+      responseStatus: result.status,
+      responseBody: result.body,
+      responseBodyTruncated: false,
+      latencyMs: result.latencyMs,
+      success: result.success,
+      errorMessage: result.errorMessage,
+    });
+
+    if (!record) {
+      logger.warn({ intervalKey }, "ping_tick_duplicate: interval_key already exists");
+      return;
+    }
+
+    await publishPing(record.id);
+    logger.info({ id: record.id, success: record.success, latencyMs: record.latencyMs }, "ping_tick_completed");
+  } catch (err) {
+    logger.error({ err }, "ping_tick_failed");
+  } finally {
+    tickInProgress = false;
+  }
+}
+
+/** Floors current time to the nearest interval bucket. */
+export function computeIntervalKey(intervalMs: number): Date {
+  const now = Date.now();
+  return new Date(Math.floor(now / intervalMs) * intervalMs);
 }

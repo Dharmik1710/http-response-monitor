@@ -15,6 +15,8 @@ sseRoutes.get("/events", (req: Request, res: Response) => {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
 
+  res.write(":ok\n\n");
+
   addClient(res);
 
   req.on("close", () => {
