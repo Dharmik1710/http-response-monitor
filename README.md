@@ -1,13 +1,17 @@
 # HTTP Response Monitor
 
-Scheduled httpbin pings stored in Postgres + a REST history API + an SSE dashboard.
+Scheduled httpbin pings stored in Postgres + a REST history API + an SSE dashboard. Live dashboard: [https://http-monitor-frontend.onrender.com](https://http-monitor-frontend.onrender.com).
 
 ## Repository structure
 
 ```
 CT_assessment/
 ├── backend/              # Node/Express + Prisma + Redis pub/sub
+│   ├── src/              # API, ping scheduler, realtime, config, db
+│   └── tests/            # unit + integration tests (Vitest)
 ├── frontend/             # React/Vite dashboard
+│   ├── src/              # components, hooks, API client
+│   └── tests/            # unit tests (Vitest)
 └── docker-compose.yml   # local: Postgres + Redis
 ```
 
