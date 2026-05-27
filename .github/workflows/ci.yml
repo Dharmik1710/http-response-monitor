@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# One production deploy at a time
+concurrency:
+  group: production-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  deployments: write
+  pull-requests: write
 
 jobs:
   unit-tests:
@@ -116,3 +127,131 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
       - run: npx vite build
+
+  pr-feedback:
+    name: PR status
+    needs: [unit-tests, integration-tests, lint-backend, lint-frontend]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- ci-deploy-status -->';
+            const dashboard = process.env.RENDER_DASHBOARD_URL || '(set `RENDER_DASHBOARD_URL` repo variable)';
+            const health = process.env.RENDER_API_HEALTH_URL || '(set `RENDER_API_HEALTH_URL` repo variable)';
+            const body = [
+              marker,
+              '### CI passed',
+              '',
+              'All checks succeeded. **Merging to `main` will trigger a production deploy** (if deploy secrets are configured).',
+              '',
+              '| | URL |',
+              '|---|---|',
+              `| Dashboard | ${dashboard} |`,
+              `| API health | ${health} |`,
+              '',
+              '_Live deploy status appears under **Deployments** on the merge commit after merge._',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+        env:
+          RENDER_DASHBOARD_URL: ${{ vars.RENDER_DASHBOARD_URL }}
+          RENDER_API_HEALTH_URL: ${{ vars.RENDER_API_HEALTH_URL }}
+
+  deploy:
+    name: Deploy to Render
+    needs: [unit-tests, integration-tests, lint-backend, lint-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.RENDER_DASHBOARD_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require deploy hooks
+        env:
+          RENDER_DEPLOY_HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+          RENDER_DEPLOY_HOOK_FRONTEND: ${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_API" ] || [ -z "$RENDER_DEPLOY_HOOK_FRONTEND" ]; then
+            echo "::error::Add RENDER_DEPLOY_HOOK_API and RENDER_DEPLOY_HOOK_FRONTEND repository secrets (see README Deployment)."
+            exit 1
+          fi
+
+      - name: Start GitHub deployment
+        uses: chrnorm/deployment-action@v2
+        id: deployment
+        with:
+          token: ${{ github.token }}
+          environment: production
+          environment-url: ${{ vars.RENDER_DASHBOARD_URL }}
+
+      - name: Trigger Render deploy (API)
+        env:
+          RENDER_DEPLOY_HOOK_API: ${{ secrets.RENDER_DEPLOY_HOOK_API }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_API"
+
+      - name: Trigger Render deploy (frontend)
+        env:
+          RENDER_DEPLOY_HOOK_FRONTEND: ${{ secrets.RENDER_DEPLOY_HOOK_FRONTEND }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_FRONTEND"
+
+      - name: Wait for API health
+        env:
+          RENDER_API_HEALTH_URL: ${{ vars.RENDER_API_HEALTH_URL }}
+        run: |
+          if [ -z "$RENDER_API_HEALTH_URL" ]; then
+            echo "::warning::RENDER_API_HEALTH_URL not set — skipping health wait"
+            exit 0
+          fi
+          echo "Polling $RENDER_API_HEALTH_URL (up to 12 min)..."
+          for i in $(seq 1 72); do
+            if curl -fsS "$RENDER_API_HEALTH_URL" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+              echo "API is healthy"
+              exit 0
+            fi
+            echo "Attempt $i/72 — not ready yet"
+            sleep 10
+          done
+          echo "::error::API did not become healthy in time"
+          exit 1
+
+      - name: Mark deployment success
+        if: success()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ github.token }}
+          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
+          state: success
+          environment-url: ${{ vars.RENDER_DASHBOARD_URL }}
+
+      - name: Mark deployment failure
+        if: failure()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ github.token }}
+          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
+          state: failure

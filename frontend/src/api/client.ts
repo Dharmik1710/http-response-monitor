@@ -1,11 +1,10 @@
 import type { PingsResponse } from "../types";
-
-const BASE = "/api";
+import { apiUrl } from "../config";
 
 export async function fetchPings(offset = 0): Promise<PingsResponse> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/responses?offset=${offset}`);
+    res = await fetch(apiUrl(`/api/responses?offset=${offset}`));
   } catch {
     throw new Error("Unable to reach the server. Check if the backend is running.");
   }
@@ -18,7 +17,7 @@ export async function fetchPings(offset = 0): Promise<PingsResponse> {
 export async function fetchHealth(): Promise<{ ok: boolean; db: string }> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/health`);
+    res = await fetch(apiUrl("/api/health"));
   } catch {
     throw new Error("Unable to reach the server. Check if the backend is running.");
   }

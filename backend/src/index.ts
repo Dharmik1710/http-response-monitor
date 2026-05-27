@@ -18,7 +18,7 @@ async function main() {
     if (role === "web" || role === "monolith") {
         createSubscriber();
         const app = createApp();
-        app.listen(config.port, () => {
+        app.listen(config.port, "0.0.0.0", () => {
             logger.info({ port: config.port }, "Web server listening");
         });
     }

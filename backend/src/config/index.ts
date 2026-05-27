@@ -30,4 +30,7 @@ export const config = {
     process.env.PING_INTERVAL_MS || "300000",
     10
   ),
+
+  /** Comma-separated allowed CORS origins (required in production for split deploy) */
+  frontendUrl: process.env.FRONTEND_URL || "",
 };
