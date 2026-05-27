@@ -1,95 +1,125 @@
 # HTTP Response Monitor
 
-BizScout take-home: scheduled httpbin pings, PostgreSQL storage, REST history, SSE dashboard. **Modular monolith** — one backend codebase, deployable as **worker** (ping) or **web** (API) via `APP_ROLE`. Option B (LLM) after core ships.
-
-**Status:** Core complete
+Scheduled httpbin pings stored in Postgres + a REST history API + an SSE dashboard.
 
 ## Repository structure
 
 ```
 CT_assessment/
-├── backend/          # Node + Express (worker + web roles)
-├── frontend/         # React + Vite + TypeScript
-└── docker-compose.yml   # local: postgres, redis, worker, web, frontend
+├── backend/              # Node/Express + Prisma + Redis pub/sub
+├── frontend/             # React/Vite dashboard
+└── docker-compose.yml   # local: Postgres + Redis
 ```
 
-## Setup
+## Local setup
 
-**Prerequisites:** Node 20+, PostgreSQL 15+, Redis, npm/pnpm
-
-| Variable | Worker | Web | Notes |
-|----------|--------|-----|--------|
-| `APP_ROLE` | `worker` | `web` | Required |
-| `DATABASE_URL` | ✓ | ✓ | Shared Postgres |
-| `REDIS_URL` | ✓ | ✓ | Pub/sub |
-| `PORT` | optional | `3000` | Web serves HTTP/SSE |
-| `HTTPBIN_URL` | ✓ | — | Default `https://httpbin.org/anything` |
-| `PING_INTERVAL_MS` | ✓ | — | Default `300000` (5 min) |
-| `NODE_ENV` | ✓ | ✓ | |
-
-Local: shorter `PING_INTERVAL_MS` in dev only.
+Prereqs: `node` 20+, `docker`, `npm`
 
 ```bash
 git clone <repository-url> && cd CT_assessment
-docker compose up -d           # postgres + redis
+docker compose up -d
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 cd backend && npm ci && npm run dev
-cd frontend && npm ci && npm run dev
+cd ../frontend && npm ci && npm run dev
 ```
 
-Env: copy `.env.example` → `.env` per package (`.env` is gitignored). Production secrets live on Render / GitHub Actions, not in the repo.
+- Backend API: `http://localhost:3000`
+- Frontend: `http://localhost:5173`
+
+For faster local iteration, `PING_INTERVAL_MS` is set to `30000` in `backend/.env`.
 
 ## Architecture
 
-**Modular monolith:** shared `backend/` artifact; **two deploy roles** from the same build.
+One `backend/` codebase. Runtime role is selected with **`APP_ROLE`**:
+
+| Mode | `APP_ROLE` | What runs |
+|------|------------|-----------|
+| **Monolith** (default, local + Render) | `monolith` | Scheduler + httpbin ping + Postgres write + Redis publish **and** REST + SSE in **one process** |
+| **Worker** (scale path) | `worker` | Ping scheduler only |
+| **Web** (scale path) | `web` | REST + SSE only |
+
+**Ping tick:** mutex → random JSON POST → httpbin → always insert row (success or failure) → Redis `PUBLISH pings:new` with `{ id }`. **`interval_key`** is a 5-minute UTC bucket with a UNIQUE constraint for idempotency.
+
+**Live updates:** Redis channel `pings:new`. After insert, subscribers load the row by id and push to connected SSE clients. REST loads history; SSE prepends new rows on page 1 only.
+
+### Current deployment (monolith)
+
+- **Frontend (React/Vite)**: static app; calls REST (`/api/responses`) for history and opens SSE (`/api/events`) for live rows.
+- **API (Express, `APP_ROLE=monolith`)**: serves REST + SSE and runs the scheduler in the same process (default on Render).
+- **Scheduler (`node-cron`)**: triggers `runPingTick` every `PING_INTERVAL_MS`.
+- **Ping runner (`runPingTick`)**: POSTs random JSON to httpbin, records result, publishes `{ id }` to Redis.
+- **Database (Postgres via Prisma)**: stores `ping_responses` rows (including failures) with UNIQUE `interval_key` buckets.
+- **Messaging (Redis pub/sub)**: `pings:new` fan-out; the API subscribes and broadcasts new rows to SSE clients.
+
+### Scale path (split roles; same Docker image)
 
 ```
-Worker (×1)                    Web (×N)
-APP_ROLE=worker                APP_ROLE=web
-  scheduler → runPingTick        REST + SSE
-  → Postgres                     ↑ subscribe
-  → Redis PUBLISH pings:new ─────┘
+Worker (×1)                         Web (×N)
+APP_ROLE=worker                     APP_ROLE=web
+  scheduler → runPingTick             REST /api/responses
+  → Prisma → Postgres                 SSE /api/events
+  → Redis PUBLISH pings:new ─────────→ Redis SUBSCRIBE → clients
 ```
 
-**Tick:** mutex → random JSON POST → httpbin → always insert row → publish `{ id }` (failures included). **`interval_key`** (5-min UTC bucket) UNIQUE on `ping_responses`.
+Run exactly **one** worker to avoid duplicate schedules. Scale the web role horizontally; Redis pub/sub ensures every web replica can push live updates to its connected clients.
 
-**Pub/sub:** Redis channel `pings:new`. Worker publishes after insert; each web instance subscribes and pushes to its local SSE clients.
-
-**Scale:** worker replicas = 1; web replicas = N. Same image, different env. Take-home may run web ×1.
-
-## Technology choices
+## Tech stack
 
 | Layer | Choice |
 |-------|--------|
-| Backend | TypeScript, Node, Express |
-| Frontend | React, Vite, TypeScript |
-| Database | PostgreSQL + JSONB |
-| Real-time | SSE (web); REST for history |
-| Messaging | Redis pub/sub |
-| Scheduler | `node-cron` (worker only) |
-| CI | GitHub Actions — lint, Vitest, coverage on `ping/` |
-| Deploy | Render Blueprint (free) or Railway; static frontend via platform build (Vercel optional) |
+| Backend | TypeScript, Node 20, Express |
+| ORM | Prisma (`backend/prisma/schema.prisma`) |
+| Frontend | React 18, Vite, TypeScript |
+| Database | PostgreSQL (JSONB payloads) |
+| Cache / messaging | Redis pub/sub (`pings:new`) |
+| Real-time | Server-Sent Events (SSE); REST for paginated history |
+| Scheduler | `node-cron` (worker / monolith roles) |
+| HTTP client | `fetch` to httpbin |
+| Logging | pino |
+| Tests | Vitest (unit + integration) |
+| CI | GitHub Actions (`.github/workflows/ci.yml`) |
+| Deploy | Render Blueprint (`render.yaml`) — Postgres, Redis, API, static frontend |
 
-Postgres: relational history, `interval_key` constraints, JSONB payloads, one DB for worker and web.
+## Tradeoffs
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| **Modular monolith vs microservices** | One backend repo, role via env | Faster to build and deploy; can split to worker/web later without rewriting domain logic |
+| **Monolith on Render vs split worker/web** | `APP_ROLE=monolith` in production today | One free web service, simpler ops; split when you need horizontal SSE/API scale |
+| **Prisma `db push` vs migrations** | `prisma db push` on container start | Zero manual migration step on deploy; acceptable for demo — use `prisma migrate` for stricter production change control |
+| **HTTP (REST) vs SSE vs WebSockets** | REST for history + SSE for live | REST is ideal for paginated queries; SSE is lightweight server→client push for new rows. WebSockets would add bidirectional complexity we don’t need. |
+| **Redis pub/sub vs polling** | Pub/sub | Multiple web replicas can each subscribe; no DB polling for live events |
+| **`interval_key` UNIQUE** | 5-min UTC bucket | Prevents duplicate rows if ticks overlap or a replica mis-fires |
+| **Failed pings as rows** | Always persist | Dashboard shows failures; history is complete |
+| **Render free tier** | $0 demo | API may sleep when idle (cold start); free Postgres has a 30-day limit — upgrade for long-lived production |
+| **Deploy after CI** | GitHub Actions gates deploy hooks | Broken `main` does not auto-replace a healthy deployment; optional Render “After CI checks pass” instead of hooks (pick one, not both) |
+| **Config** | `VITE_API_URL` + `FRONTEND_URL` | No hardcoded hosts; CORS locked to the real frontend origin in production |
 
 ## Assumptions
 
-- Production ping interval **5 minutes**; worker replicas **1**.
+- Production ping interval **5 minutes**
 - httpbin reachable; failed pings stored as rows.
 - No backfill of missed ticks while worker is down.
 - SSE reconnect; initial load via REST.
 - Option B (LLM agent, incidents) **not in initial scope**.
 
-## Testing strategy
+## Testing
 
-**Core component:** `runPingTick` (payload generator, httpbin client, repository, publish hook).
+| Scope | What runs | Location |
+|-------|-----------|----------|
+| **Unit** | `runPingTick`, payload generator, httpbin client, route handlers (mocked DB/Redis) | `backend/tests/unit/` |
+| **Integration** | Prisma repository against real Postgres (CI service container) | `backend/tests/integration/` |
+| **Frontend** | Components + `usePings` hook | `frontend/tests/unit/` |
 
-**Comprehensive:** success + broadcast/publish; failure row + publish; overlapping tick skipped; duplicate `interval_key`.
+**`runPingTick` cases:** success path + publish; failure row + publish; overlapping tick skipped (mutex); duplicate `interval_key` rejected.
 
-**Light:** `GET /api/responses`; optional SSE smoke.
+**CI (on PR and push to `main`):** backend build + unit tests; integration tests (Postgres + Redis); `tsc` backend/frontend; frontend tests + production build.
 
-**CI:** install → lint → test (coverage emphasis on `backend/` ping module).
+```bash
+cd backend && npm test && npm run test:integration
+cd frontend && npm test
+```
 
 ## Database schema
 
@@ -108,21 +138,44 @@ Postgres: relational history, `interval_key` constraints, JSONB payloads, one DB
 | `success` | BOOLEAN |
 | `error_message` | TEXT nullable |
 
-Index: `created_at DESC`. Migrations in `backend/migrations/`.
+Index: `created_at DESC`. Schema managed with Prisma (`backend/prisma/schema.prisma`); production applies via `prisma db push` in `docker-entrypoint.sh`.
 
 ## Deployment
 
-**Render:** Dashboard → New → Blueprint → connect repo (`render.yaml`). Sets up Postgres, Redis, monolith API, static frontend. Set `FRONTEND_URL` on the API to the frontend URL. Turn off Render auto-deploy on API/frontend; use GitHub deploy hooks (see below).
+**Platform:** [Render](https://render.com) — Blueprint from `render.yaml` provisions Postgres, Redis, monolith API (Docker), and static frontend.
 
 | | URL |
 |---|-----|
-| Dashboard | _add after deploy_ |
-| API health | _add after deploy_ |
+| Dashboard | https://http-monitor-frontend.onrender.com |
+| API health | https://http-monitor-api.onrender.com/api/health |
 
-**CI/CD:** PR/push to `main` runs tests. After merge, deploy runs when `DEPLOY_ENABLED=true` and secrets `RENDER_DEPLOY_HOOK_API`, `RENDER_DEPLOY_HOOK_FRONTEND` are set. Variables: `RENDER_DASHBOARD_URL`, `RENDER_API_HEALTH_URL`.
+**Why Render:** one Blueprint defines infra as code; free tier is enough for a reviewer demo. Tradeoff: free web services spin down after idle (30–60s cold start); free Postgres expires after ~30 days.
+
+**`render.yaml`:** service names, `plan: free`, `PING_INTERVAL_MS=300000`, internal Redis (`ipAllowList: []`), `VITE_API_URL` wired to the API URL at frontend build time. Set **`FRONTEND_URL`** on the API (CORS) to the dashboard origin after first deploy.
+
+**CI → deploy (recommended setup):**
+
+1. GitHub Actions runs tests on every PR and push to `main`.
+2. On push to `main` only: deploy job runs if `DEPLOY_ENABLED=true`.
+3. Actions POST **Render deploy hooks** for API + frontend (keep Render **Auto-Deploy off**, or use **Auto-Deploy: After CI checks pass** — not both).
+4. Workflow polls `/api/health` before marking the GitHub **production** deployment successful.
 
 ## Future improvements
 
-- Scale web to N; worker HA (leader lock or managed cron → job endpoint)
-- Option B in `backend/` (web role): tool-based agent, token limits, incidents
-- Retention, auth, structured metrics
+**Scale & reliability**
+
+- Split `APP_ROLE` to **worker ×1** + **web ×N** behind the same Docker image; Redis pub/sub already supports multiple SSE nodes.
+- Worker HA: distributed lock (Redis/Postgres advisory lock) or external scheduler (Render cron → `POST /internal/tick`) so only one tick runs globally.
+- Replace `db push` with versioned **`prisma migrate`** in CI and `migrate deploy` in entrypoint for safe schema evolution.
+- Backfill or gap detection when the worker was down (optional cron reconciliation job).
+
+**Product & API**
+
+- Retention policy (partition or archive `ping_responses` by `created_at`).
+- AuthN/AuthZ on REST + SSE (API keys or session cookies; tighten CORS).
+- Structured metrics (Prometheus/OpenTelemetry): tick duration, httpbin error rate, SSE client count, Redis lag.
+
+**Real-time & UX**
+
+- WebSocket fallback where SSE is blocked; or long-poll fallback.
+- Alerting when N consecutive pings fail; webhook/email integration.
